@@ -755,7 +755,7 @@ function load_level(idx) {
         save_map_state();
     }
 
-    localStorage.setItem("level", idx);
+    localStorage.setItem("rollmovesnake_level", idx);
     state.current_level_index = idx;
 
     const level_data = levels[idx];
@@ -1428,7 +1428,7 @@ function get_level_under_guy() {
 }
 
 function save_map_state() {
-    localStorage.setItem("map_state", JSON.stringify(map_state));
+    localStorage.setItem("rollmovesnake_map_state", JSON.stringify(map_state));
 }
 
 function snd_play_detach_to_goal() {

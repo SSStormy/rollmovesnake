@@ -2148,14 +2148,14 @@ document.body.addEventListener("keyup",keyup);
 document.body.addEventListener("keydown",keydown);
 
 try {
-    const v = JSON.parse(localStorage.getItem("map_state"));
+    const v = JSON.parse(localStorage.getItem("rollmovesnake_map_state"));
     if(v && typeof(v) == "object") {
         map_state = v;
     }
 }
 catch(e) {}
 
-state.current_level_index = parseInt(localStorage.getItem("level"));
+state.current_level_index = parseInt(localStorage.getItem("rollmovesnake_level"));
 
 if(Number.isNaN(state.current_level_index)) {
 	state.current_level_index = 0;

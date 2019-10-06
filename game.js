@@ -1445,7 +1445,7 @@ function redraw(time) {
             return sel_color;
         };
 
-        blit_text(16, get_col(0), "Play", cw * .5 - 10, ch * .5 + 30);
+        blit_text(16, get_col(0), "Press Enter to Start", cw * .5 - 60, ch * .5 + 30);
     }
     else {
 

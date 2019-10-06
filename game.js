@@ -28,6 +28,11 @@ if(Number.isNaN(audio_level)) {
     audio_level = 3;
 }
 
+let ending_snd = null;
+let ambient_snd = document.createElement("audio");
+ambient_snd.src = "ambientld45.ogg";
+ambient_snd.loop = true;
+
 function update_volume(playsnd) {
     audio_level = clamp(audio_level, 0, max_audio_level);
 
@@ -46,6 +51,12 @@ function update_volume(playsnd) {
     begin_coroutine(co_fade(1.5, (t) => {
         render_volume_alpha = square01(t);
     }));
+
+    if(ending_snd) {
+        ending_snd.volume = masterVolume;
+    }
+
+    ambient_snd.volume = masterVolume * .5;
 
     playSound(38453706);
 }
@@ -82,6 +93,7 @@ let image_names = [
     "noise-3",
     "fake-bloom",
     "confetti",
+    "credits",
 ];
 
 let PARTICLE_BEHIND = 0;
@@ -160,8 +172,8 @@ let levels = [
     level: `
 ....................
 ....................
-...5................
-...####xxxx#xx#.....
+....................
+...6###xxxx#xx#.....
 ..............#.....
 .....##########.....
 .....#..............
@@ -169,12 +181,7 @@ let levels = [
 ..............#.....
 .....##########.....
 .....#..............
-.....#..............
 .....##xx#xx####l...
-....................
-....................
-....................
-....................
 ....................
 `,
 },
@@ -560,8 +567,8 @@ let levels = [
 ....................
 ....................
 ....................
-....................
 ................6...
+....................
 ....................
 ....................
 ....................
@@ -569,7 +576,6 @@ let levels = [
 ....................
 `,
 },
-
 
     /*
 {
@@ -1062,10 +1068,11 @@ function load_level(idx) {
 
 
     if(idx === 17) {
-        state.layer_mm_level_entry = [];
+
         state.layer_key = [];
         state.layer_goal_head = [];
         state.layer_goal = [];
+        state.layer_mm_level_entry = [];
 
         remove_tile(state.layer_ground, state.player.pos);
 
@@ -1099,15 +1106,11 @@ function load_level(idx) {
 
             if(dir) {
                 remove_tile(state.layer_ground, last_pos);
+
                 set_tile(state.layer_key, last_pos, {
                     dir: dir,
                     roll: 1,
                     attached_idx: attached_idx
-                });
-
-                set_tile(state.layer_goal, last_pos, {
-                    dir: DIR_NORTH,
-                    roll: 2,
                 });
 
                 attached_idx += 1;
@@ -1116,6 +1119,101 @@ function load_level(idx) {
                 break;
             }
         }
+
+        function * cutscene () {
+            yield coroutine_sleep(1);
+
+            const attachments = get_all_attachments();
+
+            for(let i = 0; i < attached_idx + 5; i += 1) {
+                try_walk_guy([1, 0]);
+                yield(coroutine_sleep(.01));
+
+                const info = attachments[i - 3];
+                if(info) {
+                    info.data.dontdraw = true;
+                }
+            }
+
+            yield coroutine_sleep(1);
+
+            try {
+                if(!ending_snd) {
+                    ambient_snd.pause();
+
+                    ending_snd = document.createElement("audio");
+                    ending_snd.src = "ld45-ending.ogg";
+                    ending_snd.volume = masterVolume * .5;
+                    ending_snd.play().catch(() => {
+                        ending_snd = null;
+                        ambient_snd.play();
+                    });
+                }
+            }
+            catch(e) {
+                ending_snd = null;
+                ambient_snd.play();
+            }
+
+            {
+                show_credits = true;
+
+                let max_time = 27;
+                let time = max_time;
+                while(true) {
+                    const dt = yield 0;
+
+                    time -= dt;
+
+                    let t = clamp(flip01(time / max_time), 0, 1);
+                    
+                    credits_y = 15 - 50 * t;
+
+                    if(time <= 0) {
+                        break;
+                    }
+                }
+            }
+
+            yield coroutine_sleep(2);
+
+            {
+                let max_time = 2;
+                let time = max_time;
+                while(true) {
+                    time -= yield 0;
+                    let t = clamp(time / max_time, 0, 1);
+
+                    render_alpha = square01(t);
+
+                    if(time <= 0) {
+                        break;
+                    }
+                }
+            }
+
+            yield coroutine_sleep(1);
+            show_credits = false;
+            is_in_main_menu = true;
+            main_menu_can_select = true;
+            blink_selected_main_menu_opt = false;
+            load_level(0);
+
+            map_state = {
+                finished_levels: [],
+                last_map_pos: [-1, -1],
+            };
+
+            save_map_state();
+
+            begin_coroutine(co_fade(1,
+                (t) => {
+                    render_alpha = square01(flip01(t));
+                }
+            ));
+        };
+
+        begin_coroutine(cutscene());
     }
 }
 
@@ -1138,15 +1236,18 @@ function set_tile(layer, p, t) {
 
 let is_loading = true;
 let is_done_loading = false;
-let is_in_main_menu = false;
+let is_in_main_menu = true;
 let blink_selected_main_menu_opt = false;
 let render_alpha = 1;
 let render_volume_alpha = 1;
 
+// NOTE(justas): note for upcoming projects: make a draw call list that you can add
+// draw calls to at any point in the program so you can have coroutines 
 function blit_img(img, x, y, sx = 1, sy = 1, r = 0) {
     if(!img) {
         return;
     }
+
     ctx.save();
 
     ctx.translate(x * TILE_SCALE, y * TILE_SCALE);
@@ -1187,6 +1288,10 @@ let invalid_rotate_positions = [];
 let invalid_rotate_positions_draw = false;
 
 let prev_frame_idx = 0;
+
+let show_credits = 0;
+let credits_y = 0;
+
 function redraw(time) {
 
     let dt = (time - prev_time) / 1000;
@@ -1287,7 +1392,7 @@ function redraw(time) {
         blit_bg();
         blit_text(16, sel_color, "LOADING", cw * .5 - 25, ch * .5);
 
-        ctx.fillStyle = "#3b6439";
+        ctx.fillStyle = "#376457";
 
         let max_width = 48;
         let max = 0;
@@ -1330,7 +1435,7 @@ function redraw(time) {
 
         ctx.globalAlpha = render_alpha;
 
-        blit_text(32, sel_color, "ROLLmoveSNAKE", cw * .5 - 90, ch * .5 - 20);
+        blit_text(16, sel_color, "Snake Sokoban Spiral", cw * .5 - 60, ch * .5 - 20);
         blit_text(16, sel_color, "by Justas Dabrila", cw * .5 - 25, ch * .5 - 7);
 
         const get_col = (idx) => {
@@ -1533,7 +1638,21 @@ function redraw(time) {
                     const key = try_get_tile_at(state.layer_key, p);
 
                     if(key) {
-                        blit_img_dir(images["snake-body-" + String(key.roll)], x, y, key.dir);
+                        let sx = 1;
+                        let sy = 1;
+
+                        if(key.attached_idx != -1) {
+                            sx = player_scale[0];
+                            sy = player_scale[1];
+                        }
+                        if(typeof(key.dontdraw) === "undefined") {
+                            blit_img_dir(
+                                images["snake-body-" + String(key.roll)], 
+                                x, y, 
+                                key.dir,
+                                sx, sy
+                            );
+                        }
                     }
                 }
             }
@@ -1571,7 +1690,16 @@ function redraw(time) {
                     info.pos[1] + delta[1] * .5
                 ];
 
-                blit_img_dir(images["connector"], pos[0], pos[1], dir);
+                if(typeof(info.data.dontdraw) === "boolean") {
+                    continue;
+                }
+
+                blit_img_dir(
+                    images["connector"], 
+                    pos[0], pos[1], 
+                    dir,
+                    player_scale[0], player_scale[1]
+                );
             }
         }
 
@@ -1579,7 +1707,7 @@ function redraw(time) {
             if(render_volume_alpha > 0) {
                 ctx.globalAlpha = render_volume_alpha * render_volume_alpha;
 
-                blit_text(16, "#3b6439", String(audio_level), 
+                blit_text(16, "#376457", String(audio_level), 
                     state.player.pos[0] * TILE_SCALE + 2, (state.player.pos[1] + 1) * TILE_SCALE
                 );
 
@@ -1618,6 +1746,11 @@ function redraw(time) {
             blit_text(16, "white", name, 2, ch - 2);
         }
 
+        if(show_credits) {
+            ctx.globalAlpha = render_alpha;
+
+            blit_img(images["credits"], 0, credits_y);
+        }
     }
 
     requestAnimationFrame(redraw);
@@ -2094,6 +2227,8 @@ function try_roll_guy(dir) {
         else if(result == "snd3") {
             playSound(20058707);
         }
+
+        animate_player_movement();
     }
     else {
         invalid_rotate_positions_draw = true;
@@ -2124,17 +2259,27 @@ function stop_showing_invalid_rotate_positions() {
     invalid_rotate_positions_draw = false;
 }
 
-function can_stuff_go_into_square(pos) {
-    if(0 > pos[0] || pos[0] >= SIZE_X) return false;
-    if(0 > pos[1] || pos[1] >= SIZE_Y) return false;
+function is_in_map(x, y) {
+    if(0 > x || x >= SIZE_X) return false;
+    if(0 > y || y >= SIZE_Y) return false;
 
-    if(state.current_level_index != 17) {
-        if(!try_get_tile_at(state.layer_ground, pos)) {
-            return false;
-        }
+    return true;
+}
+
+function can_stuff_go_into_square(pos) {
+    if(state.current_level_index === 17) {
+        return true;
+    }
+
+    if(!is_in_map(pos[0], pos[1])) {
+        return false;
     }
 
     if(try_get_tile_at(state.layer_key, pos)) {
+        return false;
+    }
+
+    if(!try_get_tile_at(state.layer_ground, pos)) {
         return false;
     }
 
@@ -2345,6 +2490,21 @@ function try_walk_guy(delta) {
         particles.push(p);
     }
 
+    animate_player_movement();
+}
+
+let main_menu_can_select = true;
+
+function animate_player_movement() {
+    begin_coroutine(co_fade(.1,
+        (t) => {
+            const s = .8 + flip01(square01(t)) * .2;
+
+            player_scale[0] = s;
+            player_scale[1] = s;
+        }
+    ));
+
     function * particle_speedup() {
         let t = .1;
         particle_extra_vel = [1.5, 1.5];
@@ -2382,18 +2542,13 @@ function try_walk_guy(delta) {
     }
 
     begin_coroutine(particle_speedup());
-
-    begin_coroutine(co_fade(.1,
-        (t) => {
-            const s = .8 + flip01(square01(t)) * .2;
-
-            player_scale[0] = s;
-            player_scale[1] = s;
-        }
-    ));
 }
 
 function update_key(e, is_down) {
+    if(state.current_level_index == 17) {
+        return;
+    }
+
     let ret = true;
 
     if(e.key == "q" || e.key == "Q") {
@@ -2453,9 +2608,6 @@ function update_key(e, is_down) {
         }
     }
 
-    if(e.key == "Enter" || e.key == "enter") {
-    }
-
     if(is_down) {
         if(e.key == "-") {
             audio_level -= 1;
@@ -2467,13 +2619,30 @@ function update_key(e, is_down) {
         }
     }
 
-    if(!is_loading && (e.key == "x" || e.key == "X" || e.key == "Enter") && is_down) {
-        static_var("main_menu_can_select", true);
+    if(e.key == "m" || e.key == "M") {
+        if(is_down) {
 
+            if(ending_snd && !ending_snd.paused) {
+                return;
+            }
+
+            if(ambient_snd.paused) {
+                ambient_snd.play();
+            }
+            else {
+                ambient_snd.pause();
+                playSound(38453706);
+            }
+        }
+    }
+
+    if(!is_loading && (e.key == "x" || e.key == "X" || e.key == "Enter") && is_down) {
         const lv = get_level_under_guy();
 
         if(is_in_main_menu && main_menu_can_select) {
             playSound(57048103);
+
+            ambient_snd.play();
 
             function * co_blink() {
                 for(let i = 0; i < 20; i++) {
@@ -2486,7 +2655,7 @@ function update_key(e, is_down) {
 
                         }, () => {
                             is_in_main_menu = false;
-                            this.main_menu_can_select = true;
+                            main_menu_can_select = true;
 
                             begin_coroutine(co_fade(.5, (t) => {
                                 render_alpha = square01(flip01(t));
@@ -2500,8 +2669,12 @@ function update_key(e, is_down) {
 
             begin_coroutine(co_blink());
 
+            begin_coroutine(co_fade(4, (t) => {
+                ambient_snd.volume = square01(flip01(t)) * masterVolume * .5;
+            }));
+
             ret = false;
-            this.main_menu_can_select = false;
+            main_menu_can_select = false;
         }
         else if(lv) {
             fade_to_level(lv.index);

@@ -57,7 +57,9 @@ let prev_time = 0;
 let image_names = [
     "snake-body-1",
     "snake-body-2",
-    "snake-head",
+    "snake-head-0",
+    "snake-head-1",
+    "snake-head-2",
     "goal-snake-body-1",
     "goal-snake-body-2",
     "goal-snake-head",
@@ -65,15 +67,29 @@ let image_names = [
     "goal-snake-body-2-active",
     "goal-snake-head-active",
     "ground",
+    "ground-tl",
+    "ground-tl-tr",
+    "ground-tl-tr-bl",
+    "ground-tl-tr-bl-br",
     "level",
     "level-done",
     "particle-square",
     "connector",
     "invalid-sq",
     "valid-sq",
+    "noise-1",
+    "noise-2",
+    "noise-3",
+    "fake-bloom",
+    "confetti",
 ];
 
+let PARTICLE_BEHIND = 0;
+let PARTICLE_DUST = 1;
+let PARTICLE_CONFETTI = 2;
+
 let particles = [];
+let particle_extra_vel = [0, 0];
 
 let images_loaded = {"font": false};
 
@@ -144,7 +160,6 @@ let levels = [
     level: `
 ....................
 ....................
-....................
 ...5................
 ...####xxxx#xx#.....
 ..............#.....
@@ -154,12 +169,14 @@ let levels = [
 ..............#.....
 .....##########.....
 .....#..............
-.....##xx#xx#.......
+.....#..............
+.....##xx#xx####l...
 ....................
 ....................
 ....................
 ....................
-    `,
+....................
+`,
 },
 
 
@@ -179,7 +196,7 @@ let levels = [
 ....................
 ....................
 ....................
-    `,
+`,
 },
 
 // NOTE(justas): snake basics & 1 primitive showcase
@@ -199,7 +216,7 @@ let levels = [
 ....................
 ....................
 ....................
-    `,
+`,
 },
 
 
@@ -420,7 +437,7 @@ let levels = [
 ......w5#t.##d......
 ......w###.##AA.....
 ......##########....
-......D#...ttt##....
+......S#...ttt##....
 ....................
 ....................
 ....................
@@ -529,7 +546,32 @@ let levels = [
     `,
 },
 
+{
+    name: "Finale",
+    level: `
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+....................
+................6...
+....................
+....................
+....................
+....................
+....................
+`,
+},
 
+
+    /*
 {
     // TODO(justas): big roll
     name: "TODO",
@@ -549,6 +591,7 @@ let levels = [
 ....................
     `,
 },
+*/
 
 
     /*
@@ -674,6 +717,7 @@ let map_state = {
     last_map_pos: [-1, -1],
 };
 
+let player_scale = [1, 1];
 let state = {
     layer_ground: [],
     layer_key: [],
@@ -684,7 +728,9 @@ let state = {
     player: {
         pos: [0, 0],
         dir: DIR_NORTH,
-        ignore_attach_at: []
+        ignore_attach_at: [],
+        walk_phase: 1,
+        walk_phase_backwards: false,
     },
 };
 
@@ -695,6 +741,12 @@ function push_state() {
 }
 
 function pop_state() {
+    stop_showing_invalid_rotate_positions();
+
+    if(is_entering_level) {
+        return;
+    }
+
     if(states.length <= 0) {
         return;
     }
@@ -721,28 +773,45 @@ function show_level_name() {
     ));
 }
 
-function fade_to_level(idx) {
-    static_var("is_entering_level", false);
+let is_entering_level = false;
+function fade_to_level(idx, wait_a_bit = false) {
+    stop_showing_invalid_rotate_positions();
 
     if(!is_entering_level) {
-        begin_coroutine(co_fade(1, 
-            (t) => {
-                this.is_entering_level = true;
-                render_alpha = square01(t);
-            },
-            () => {
-                load_level(idx);
-                this.is_entering_level = false;
+        is_entering_level = true;
 
-                begin_coroutine(co_fade(1, 
-                    (t) => {
-                        render_alpha = square01(flip01(t));
-                    }
-                ));
+        const start_fade = () => {
+            begin_coroutine(co_fade(1, 
+                (t) => {
+                    render_alpha = square01(t);
+                },
+                () => {
+                    load_level(idx);
+                    is_entering_level = false;
 
-                show_level_name();
-            }
-        ));
+                    begin_coroutine(co_fade(1, 
+                        (t) => {
+                            render_alpha = square01(flip01(t));
+                        }
+                    ));
+
+                    show_level_name();
+                }
+            ));
+        };
+
+        if(wait_a_bit) {
+            begin_coroutine(co_fade(1,
+                (t) => {
+                },
+                () => {
+                    start_fade();
+                }
+            ));
+        }
+        else {
+            start_fade();
+        }
 
         return true;
     }
@@ -750,13 +819,12 @@ function fade_to_level(idx) {
 }
 
 function load_level(idx) {
+    stop_showing_invalid_rotate_positions();
+
     if(state.current_level_index === 0 && idx !== 0) {
         map_state.last_map_pos = vec_copy(state.player.pos);
         save_map_state();
     }
-
-    localStorage.setItem("rollmovesnake_level", idx);
-    state.current_level_index = idx;
 
     const level_data = levels[idx];
     const l = level_data.level;
@@ -771,6 +839,13 @@ function load_level(idx) {
     let y = 0;
 
     let mm_level_index = 1;
+
+    if(idx === 17) {
+        load_level(0);
+    }
+
+    localStorage.setItem("rollmovesnake_level", idx);
+    state.current_level_index = idx;
 
     for(let i = 0; i < l.length; i += 1) {
 
@@ -984,6 +1059,64 @@ function load_level(idx) {
     if(idx == 0 && !vec_equals(map_state.last_map_pos, [-1,-1])) {
         state.player.pos = vec_copy(map_state.last_map_pos);
     }
+
+
+    if(idx === 17) {
+        state.layer_mm_level_entry = [];
+        state.layer_key = [];
+        state.layer_goal_head = [];
+        state.layer_goal = [];
+
+        remove_tile(state.layer_ground, state.player.pos);
+
+        let last_pos = state.player.pos;
+        
+        let attached_idx = 0;
+        while(true) {
+            const top_pos = [last_pos[0], last_pos[1] - 1];
+            const bottom_pos = [last_pos[0], last_pos[1] + 1];
+            const left_pos = [last_pos[0] - 1, last_pos[1]];
+            const right_pos = [last_pos[0] + 1, last_pos[1]];
+
+            let dir = null;
+
+            if(try_get_tile_at(state.layer_ground, top_pos)) {
+                last_pos = top_pos;
+                dir = DIR_SOUTH;
+            }
+            else if(try_get_tile_at(state.layer_ground, bottom_pos)) {
+                last_pos = top_bottom;
+                dir = DIR_NORTH;
+            }
+            else if(try_get_tile_at(state.layer_ground, left_pos)) {
+                last_pos = left_pos;
+                dir = DIR_EAST;
+            }
+            else if(try_get_tile_at(state.layer_ground, right_pos)) {
+                last_pos = right_pos;
+                dir = DIR_WEST;
+            }
+
+            if(dir) {
+                remove_tile(state.layer_ground, last_pos);
+                set_tile(state.layer_key, last_pos, {
+                    dir: dir,
+                    roll: 1,
+                    attached_idx: attached_idx
+                });
+
+                set_tile(state.layer_goal, last_pos, {
+                    dir: DIR_NORTH,
+                    roll: 2,
+                });
+
+                attached_idx += 1;
+            }
+            else {
+                break;
+            }
+        }
+    }
 }
 
 function try_get_tile_at(layer, p) {
@@ -1031,8 +1164,8 @@ function blit_img(img, x, y, sx = 1, sy = 1, r = 0) {
     ctx.restore();
 }
 
-function blit_img_dir(img, x, y, dir) {
-    blit_img(img, x, y, 1, 1, dir * 90 * DEG_TO_RAD);
+function blit_img_dir(img, x, y, dir, sx = 1, sy = 1) {
+    blit_img(img, x, y, sx, sy, (dir * 90 * DEG_TO_RAD));
 }
 
 function blit_anim(img_name, speed, count, x, y, sx = 1, sy = 1, r = 0) {
@@ -1089,7 +1222,7 @@ function redraw(time) {
 
                     scale: [s,s],
                     scale_dx1: [s_dx, s_dx],
-                    behind: true
+                    type: PARTICLE_BEHIND,
                 };
 
                 particles.push(p);
@@ -1106,8 +1239,25 @@ function redraw(time) {
             }
 
             if(p.vel) {
-                p.pos[0] += p.vel[0] * dt;
-                p.pos[1] += p.vel[1] * dt;
+                let x = p.vel[0];
+                let y = p.vel[1];
+
+                if(p.type == PARTICLE_BEHIND) {
+                    if(x) {
+                        x += Math.sign(x) * particle_extra_vel[0];
+                    }
+
+                    if(y) {
+                        y += Math.sign(y) * particle_extra_vel[1];
+                    }
+                }
+
+                p.pos[0] += x * dt;
+                p.pos[1] += y * dt;
+            }
+
+            if(p.rot_dx1 && typeof(p.rot) == "number") {
+                p.rot += p.rot_dx1 * dt;
             }
 
             if(p.scale_dx1) {
@@ -1127,7 +1277,7 @@ function redraw(time) {
     const blit_bg = () => {
         ctx.globalAlpha = 1;
         ctx.clearRect(0, 0, cw, ch);
-        ctx.fillStyle = "#23262d";
+        ctx.fillStyle = "#27232d";
         ctx.fillRect(0, 0, cw, ch);
         ctx.globalAlpha = render_alpha;
     };
@@ -1210,7 +1360,7 @@ function redraw(time) {
 
         ctx.globalAlpha = render_alpha * .2;
         for(const p of particles) {
-            if(p.behind) {
+            if(p.type == PARTICLE_BEHIND) {
                 blit_img(images["particle-square"], 
                     p.pos[0], p.pos[1],
                     p.scale[0], p.scale[1]
@@ -1219,25 +1369,109 @@ function redraw(time) {
         }
         ctx.globalAlpha = render_alpha;
 
+        const draw_noise = (x, y) => {
+            const idx = ((x + y + ((y+x) % 6)) % 3) + 1;
+
+            let rot = 0;
+            let rot_idx = (x*y) % 4;
+
+            if(rot_idx == 1) {
+                rot = 90 * DEG_TO_RAD;
+            }
+            else if(rot_idx == 2) {
+                rot = 180* DEG_TO_RAD;
+            }
+            else if(rot_idx == 3) {
+                rot = 270 * DEG_TO_RAD;
+            }
+
+            blit_img(images["noise-" + String(idx)], x, y, 1, 1, rot);
+        };
+
         for(let y = 0; y < SIZE_Y; y += 1) {
             for(let x = 0; x < SIZE_X; x += 1) {
                 const p = [x,y];
 
                 if(try_get_tile_at(state.layer_ground, p)) {
-                    blit_img(images["ground"], x, y);
+                    const has_tl = try_get_tile_at(state.layer_ground, [p[0] - 1, p[1] - 1]);
+                    const has_tr = try_get_tile_at(state.layer_ground, [p[0] + 1, p[1] - 1]);
+                    const has_bl = try_get_tile_at(state.layer_ground, [p[0] - 1, p[1] + 1]);
+                    const has_br = try_get_tile_at(state.layer_ground, [p[0] + 1, p[1] + 1]);
+                    const has_top = try_get_tile_at(state.layer_ground, [p[0], p[1] - 1]);
+                    const has_bottom = try_get_tile_at(state.layer_ground, [p[0], p[1] + 1]);
+                    const has_left = try_get_tile_at(state.layer_ground, [p[0] - 1, p[1]]);
+                    const has_right = try_get_tile_at(state.layer_ground, [p[0] + 1, p[1]]);
+
+                    let do_noise = false;
+
+                    if(!has_top && !has_left && has_right && has_bottom) {
+                        blit_img(images["ground-tl"], x, y);
+                        do_noise = true;
+                    }
+                    else if(!has_top && !has_right && has_left && has_bottom) {
+                        blit_img(images["ground-tl"], x, y, 1, 1, 90 * DEG_TO_RAD);
+                        do_noise = true;
+                    }
+                    else if(!has_bottom && !has_right && has_left && has_top) {
+                        blit_img(images["ground-tl"], x, y, 1, 1, 180 * DEG_TO_RAD);
+                        do_noise = true;
+                    }
+                    else if(!has_bottom && !has_left && has_right && has_top) {
+                        blit_img(images["ground-tl"], x, y, 1, 1, 270 * DEG_TO_RAD);
+                        do_noise = true;
+                    }
+
+                    else if(!has_top && !has_left && !has_right && has_bottom) {
+                        blit_img(images["ground-tl-tr"], x, y);
+                        do_noise = true;
+                    }
+                    else if(!has_top && !has_bottom && !has_right && has_left) {
+                        blit_img(images["ground-tl-tr"], x, y, 1, 1, 90 * DEG_TO_RAD);
+                        do_noise = true;
+                    }
+                    else if(!has_left && !has_bottom && !has_right && has_top) {
+                        blit_img(images["ground-tl-tr"], x, y, 1, 1, 180 * DEG_TO_RAD);
+                        do_noise = true;
+                    }
+                    else if(!has_left && !has_bottom && !has_top && has_right) {
+                        blit_img(images["ground-tl-tr"], x, y, 1, 1, 270 * DEG_TO_RAD);
+                        do_noise = true;
+                    }
+
+                    else {
+                        blit_img(images["ground"], x, y);
+                    }
+
+                    if(do_noise) {
+                        draw_noise(x, y);
+                    }
+                }
+
+                if((x * y-state.current_level_index) % 31== 0) {
+                    draw_noise(x, y);
                 }
             }
         }
 
         for(const p of particles) {
-            if(!p.behind) {
+            if(p.type == PARTICLE_DUST) {
                 blit_img(images["particle-square"], 
                     p.pos[0], p.pos[1],
                     p.scale[0], p.scale[1]
                 );
             }
+            else if(p.type == PARTICLE_CONFETTI) {
+                blit_img(images["confetti"], 
+                    p.pos[0], p.pos[1],
+                    p.scale[0], p.scale[1],
+                    p.rot
+                );
+            }
         }
 
+
+
+        let do_fake_bloom_in = [];
         for(let y = 0; y < SIZE_Y; y += 1) {
             for(let x = 0; x < SIZE_X; x += 1) {
                 const p = [x,y];
@@ -1247,10 +1481,16 @@ function redraw(time) {
 
                     if(goal) {
                         let img_name = "goal-snake-body-" + String(goal.roll);
-                        if(is_key_goal_satisfied(p)) {
+                        const is_satisfied = is_key_goal_satisfied(p);
+
+                        if(is_satisfied) {
                             img_name = img_name + "-active";
                         }
                         blit_img_dir(images[img_name], x, y, goal.dir);
+
+                        if(is_satisfied) {
+                            do_fake_bloom_in.push(p);
+                        }
                     }
                 }
 
@@ -1260,11 +1500,17 @@ function redraw(time) {
                     if(goal) {
                         let img_name = "goal-snake-head";
 
-                        if(is_player_goal_satisfied(p)) {
+                        const is_satisfied = is_player_goal_satisfied(p);
+
+                        if(is_satisfied) {
                             img_name = img_name + "-active";
                         }
 
                         blit_img_dir(images[img_name], x, y, goal.dir);
+
+                        if(is_satisfied) {
+                            do_fake_bloom_in.push(p);
+                        }
                     }
                 }
 
@@ -1340,11 +1586,17 @@ function redraw(time) {
                 ctx.globalAlpha = 1 - ctx.globalAlpha;
             }
 
-            blit_img_dir(images["snake-head"], 
+            blit_img_dir(images["snake-head-" + String(state.player.walk_phase)],
                 state.player.pos[0], state.player.pos[1],
-                state.player.dir
+                state.player.dir,
+                player_scale[0], player_scale[1]
             );
         }
+
+        for(const p of do_fake_bloom_in) {
+            blit_img(images["fake-bloom"], p[0], p[1]);
+        }
+
 
         ctx.globalAlpha = render_alpha;
 
@@ -1477,10 +1729,19 @@ function is_player_goal_satisfied(p) {
         return false;
     }
 
+    if(state.current_level_index === 0) {
+        if(map_state.finished_levels.length !== 16) {
+            return false;
+        }
+    }
+
     return true;
 }
 
+let last_num_satisfied_all_goals = 0;
+let last_was_player_goal_satisfied = false;
 function check_for_win() {
+
     let num_goals = 0;
     for(let y = 0; y < SIZE_Y; y += 1) {
         for(let x = 0; x < SIZE_X; x += 1) {
@@ -1517,7 +1778,9 @@ function check_for_win() {
                 continue;
             }
 
-            snd_play_detach_to_goal();
+            if(!last_was_player_goal_satisfied) {
+                snd_play_detach_to_goal();
+            }
             is_player_in_goal = true;
 
             break;
@@ -1527,17 +1790,74 @@ function check_for_win() {
             break;
         }
     }
+    last_was_player_goal_satisfied = is_player_in_goal;
 
+    let play_unsatisfied = true;
     if(is_player_in_goal && num_satisfied_key_goals == num_goals) {
-        static_var("did_just_finish_level", false);
+        play_unsatisfied = false;
 
-        const next_level = (state.current_level_index + 1) % levels.length;
-        if(fade_to_level(next_level)) {
-            playSound(52359700);
-            map_state.finished_levels.push(state.current_level_index);
-            save_map_state();
+        if(state.current_level_index == 0) {
+            load_level(17);
+        }
+        else {
+            let next_level = 0;
+            if(state.current_level_index === 16) {
+                next_level = 0;
+            }
+            else {
+                next_level = state.current_level_index + 1;
+            }
+
+            if(fade_to_level(next_level, true)) {
+
+                for(let i = 0; i < 5; i++) {
+                    const s = .5 + rng.uniform() * 1.5;
+                    const s_dx = -.5 - rng.uniform() * .5;
+
+                    const p = {
+                        pos: [
+                            state.player.pos[0] + .5 - s * .5,
+                            state.player.pos[1] + .5 - s * .5,
+                        ],
+                        vel: [
+                            .5 + rng.normal() * 1, 
+                            .5 + rng.normal() * 1
+                        ],
+                        scale: [s,s],
+                        scale_dx1: [s_dx, s_dx],
+
+                        rot: rng.normal() * TAU * .25,
+                        rot_dx1: 90 * DEG_TO_RAD + rng.normal() * TAU * .25,
+
+                        type: PARTICLE_CONFETTI
+                    };
+
+                    particles.push(p);
+                }
+
+                playSound(52359700);
+
+                if(!map_state.finished_levels.includes(state.current_level_index)) {
+                    map_state.finished_levels.push(state.current_level_index);
+                }
+
+                save_map_state();
+            }
         }
     }
+
+    let num_satisfied_all_goals = num_satisfied_key_goals;
+    if(is_player_in_goal) {
+        num_satisfied_all_goals += 1;
+    }
+
+    if(play_unsatisfied) {
+        if(last_num_satisfied_all_goals > num_satisfied_all_goals) {
+            playSound(22492904);
+        }
+    }
+
+    last_num_satisfied_all_goals = num_satisfied_all_goals;
 }
 
 function try_detach_keys_for_goals() {
@@ -1649,6 +1969,11 @@ function get_all_attachments() {
 }
 
 function try_roll_guy(dir) {
+    stop_showing_invalid_rotate_positions();
+
+    if(is_entering_level) {
+        return false;
+    }
 
     let attachments = get_all_attachments();
 
@@ -1752,8 +2077,6 @@ function try_roll_guy(dir) {
 
         try_detach_keys_for_goals();
 
-        stop_showing_invalid_rotate_positions();
-
         let table = {
             snd1: 1,
             snd2: 1,
@@ -1802,8 +2125,13 @@ function stop_showing_invalid_rotate_positions() {
 }
 
 function can_stuff_go_into_square(pos) {
-    if(!try_get_tile_at(state.layer_ground, pos)) {
-        return false;
+    if(0 > pos[0] || pos[0] >= SIZE_X) return false;
+    if(0 > pos[1] || pos[1] >= SIZE_Y) return false;
+
+    if(state.current_level_index != 17) {
+        if(!try_get_tile_at(state.layer_ground, pos)) {
+            return false;
+        }
     }
 
     if(try_get_tile_at(state.layer_key, pos)) {
@@ -1815,6 +2143,12 @@ function can_stuff_go_into_square(pos) {
 
 function try_walk_guy(delta) {
 
+    stop_showing_invalid_rotate_positions();
+
+    if(is_entering_level) {
+        return false;
+    }
+
     const new_pos = vec_add(state.player.pos, delta);
 
     if(!can_stuff_go_into_square(new_pos)) {
@@ -1823,7 +2157,6 @@ function try_walk_guy(delta) {
 
     push_state();
 
-    stop_showing_invalid_rotate_positions();
 
     const old_player_pos = state.player.pos;
     state.player.pos = new_pos;
@@ -1990,7 +2323,7 @@ function try_walk_guy(delta) {
     check_for_win();
 
     for(let i = 0; i < 3; i++) {
-        const s = .2 + rng.uniform() * .4;
+        const s = .1 + rng.uniform() * .2;
         const s_dx = -.5;
 
         const p = {
@@ -2006,11 +2339,58 @@ function try_walk_guy(delta) {
 
             scale: [s,s],
             scale_dx1: [s_dx, s_dx],
-            behind: false 
+            type: PARTICLE_DUST,
         };
 
         particles.push(p);
     }
+
+    function * particle_speedup() {
+        let t = .1;
+        particle_extra_vel = [1.5, 1.5];
+
+        while(true) {
+            dt = yield 0;
+            t -= dt;
+
+            if(t <= 0) {
+                break;
+            }
+        }
+        particle_extra_vel = [0, 0];
+    };
+
+    {
+        let delta = 1;
+
+        if(state.player.walk_phase_backwards) {
+            if(state.player.walk_phase === 0) {
+                state.player.walk_phase_backwards = false;
+            }
+        }
+        else {
+            if(state.player.walk_phase === 2) {
+                state.player.walk_phase_backwards = true;
+            }
+        }
+
+        if(state.player.walk_phase_backwards) {
+            delta = -1;
+        }
+
+        state.player.walk_phase += delta;
+    }
+
+    begin_coroutine(particle_speedup());
+
+    begin_coroutine(co_fade(.1,
+        (t) => {
+            const s = .8 + flip01(square01(t)) * .2;
+
+            player_scale[0] = s;
+            player_scale[1] = s;
+        }
+    ));
 }
 
 function update_key(e, is_down) {
@@ -2053,9 +2433,8 @@ function update_key(e, is_down) {
     }
 
     if(e.key == "r" || e.key == "R") {
-        if(is_down && !is_in_main_menu) {
+        if(is_down && !is_in_main_menu && !is_entering_level) {
             push_state();
-
             load_level(state.current_level_index);
         }
         ret = false;
@@ -2069,7 +2448,7 @@ function update_key(e, is_down) {
     }
 
     if(e.key == "Backspace") {
-        if(state.current_level_index != 0) {
+        if(state.current_level_index != 0 && state.current_level_index != 17) {
             fade_to_level(0);
         }
     }
